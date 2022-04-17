@@ -1,0 +1,25 @@
+{
+    "0xD2F2D": {
+      "label": "Bright+",
+      "cmnt": "smaller steps at beginning, larger steps at the end",
+      "cmd": "&A=~20"
+    },
+    
+    "0xD3F2C": {
+        "label": "Bright-",
+        "cmnt": "smaller steps at beginning, larger steps at the end",
+        "cmd": "&A=~-20"
+      },
+    
+      "0xFFF00": {
+        "label": "fxnext",
+        "cmnt": "next effect",
+        "cmd": "&FX=~"
+      },
+    
+      "0x17FE8": {
+        "label": "fxPrev",
+        "cmnt": "previous effect",
+        "cmd": "&FX=~-"
+      }
+  }

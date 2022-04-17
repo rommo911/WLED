@@ -7,7 +7,7 @@
 #if defined(WLED_DISABLE_INFRARED)
 void handleIR(){}
 #else
-
+#define IR_CALL_MODE CALL_MODE_DIRECT_CHANGE
 IRrecv* irrecv;
 //change pin in NpbWrapper.h
 
@@ -263,7 +263,7 @@ void changeWhite(int8_t amount, int16_t cct=-1)
 
 void decodeIR(uint32_t code)
 {
-  if (code == 0xFFFFFFFF) {
+  if (code == 0xFFFFFFFF || code > 0xFFFFF) {
     //repeated code, continue brightness up/down
     irTimesRepeated++;
     applyRepeatActions();
@@ -274,7 +274,7 @@ void decodeIR(uint32_t code)
 
   if (irEnabled == 8) { // any remote configurable with ir.json file
     decodeIRJson(code);
-    stateUpdated(CALL_MODE_BUTTON);
+    stateUpdated(IR_CALL_MODE);
     return;
   }
   if (code > 0xFFFFFF) return; //invalid code
@@ -296,7 +296,7 @@ void decodeIR(uint32_t code)
   }
 
   if (nightlightActive && bri == 0) nightlightActive = false;
-  stateUpdated(CALL_MODE_BUTTON); //for notifier, IR is considered a button input
+  stateUpdated(IR_CALL_MODE); //for notifier, IR is considered a button input
 }
 
 void applyRepeatActions()
@@ -305,24 +305,24 @@ void applyRepeatActions()
     decodeIRJson(lastValidCode);
     return;
   } else switch (lastRepeatableAction) {
-    case ACTION_BRIGHT_UP :      incBrightness();                            stateUpdated(CALL_MODE_BUTTON); return;
-    case ACTION_BRIGHT_DOWN :    decBrightness();                            stateUpdated(CALL_MODE_BUTTON); return;
-    case ACTION_SPEED_UP :       changeEffectSpeed(lastRepeatableValue);     stateUpdated(CALL_MODE_BUTTON); return;
-    case ACTION_SPEED_DOWN :     changeEffectSpeed(lastRepeatableValue);     stateUpdated(CALL_MODE_BUTTON); return;
-    case ACTION_INTENSITY_UP :   changeEffectIntensity(lastRepeatableValue); stateUpdated(CALL_MODE_BUTTON); return;
-    case ACTION_INTENSITY_DOWN : changeEffectIntensity(lastRepeatableValue); stateUpdated(CALL_MODE_BUTTON); return;
+    case ACTION_BRIGHT_UP :      incBrightness();                            stateUpdated(IR_CALL_MODE); return;
+    case ACTION_BRIGHT_DOWN :    decBrightness();                            stateUpdated(IR_CALL_MODE); return;
+    case ACTION_SPEED_UP :       changeEffectSpeed(lastRepeatableValue);     stateUpdated(IR_CALL_MODE); return;
+    case ACTION_SPEED_DOWN :     changeEffectSpeed(lastRepeatableValue);     stateUpdated(IR_CALL_MODE); return;
+    case ACTION_INTENSITY_UP :   changeEffectIntensity(lastRepeatableValue); stateUpdated(IR_CALL_MODE); return;
+    case ACTION_INTENSITY_DOWN : changeEffectIntensity(lastRepeatableValue); stateUpdated(IR_CALL_MODE); return;
     default: break;
   }
   if (lastValidCode == IR40_WPLUS) {
     changeWhite(10);
-    stateUpdated(CALL_MODE_BUTTON);
+    stateUpdated(IR_CALL_MODE);
   } else if (lastValidCode == IR40_WMINUS) {
     changeWhite(-10);
-    stateUpdated(CALL_MODE_BUTTON);
+    stateUpdated(IR_CALL_MODE);
   } else if ((lastValidCode == IR24_ON || lastValidCode == IR40_ON) && irTimesRepeated > 7 ) {
     nightlightActive = true;
     nightlightStartTime = millis();
-    stateUpdated(CALL_MODE_BUTTON);
+    stateUpdated(IR_CALL_MODE);
   }
 }
 
@@ -655,6 +655,7 @@ void decodeIRJson(uint32_t code)
   if (fdo.isNull()) {
     //the received code does not exist
     if (!WLED_FS.exists("/ir.json")) errorFlag = ERR_FS_IRLOAD; //warn if IR file itself doesn't exist
+    
     releaseJSONBufferLock();
     return;
   }
