@@ -51,13 +51,16 @@
 // how many seconds after boot to take first measurement, 90 seconds
 // 90 gives enough time to OTA update firmware if this crashes
 #ifndef USERMOD_DHT_FIRST_MEASUREMENT_AT
-#define USERMOD_DHT_FIRST_MEASUREMENT_AT 90000
+#define USERMOD_DHT_FIRST_MEASUREMENT_AT 9000
 #endif
 
 // from COOLDOWN_TIME in dht_nonblocking.cpp
 #define DHT_TIMEOUT_TIME  10000
 
 DHT_nonblocking dht_sensor(DHTPIN, DHTTYPE);
+
+
+
 
 class UsermodDHT : public Usermod {
   private:
@@ -66,10 +69,9 @@ class UsermodDHT : public Usermod {
     float humidity, temperature = 0;
     bool initializing = true;
     bool disabled = false;
-    #ifdef USERMOD_DHT_MQTT
-    char dhtMqttTopic[64];
-    size_t dhtMqttTopicLen;
-    #endif
+    bool mqttInitialized = false;
+    String dhtTempMqttTopic;
+    String dhtHumMqttTopic;
     #ifdef USERMOD_DHT_STATS
     unsigned long nextResetStatsTime = 0;
     uint16_t updates = 0;
@@ -84,19 +86,66 @@ class UsermodDHT : public Usermod {
     void setup() {
       nextReadTime = millis() + USERMOD_DHT_FIRST_MEASUREMENT_AT;
       lastReadTime = millis();
-      #ifdef USERMOD_DHT_MQTT
-      sprintf(dhtMqttTopic, "%s/dht", mqttDeviceTopic);
-      dhtMqttTopicLen = strlen(dhtMqttTopic);
-      #endif
+
       #ifdef USERMOD_DHT_STATS
       nextResetStatsTime = millis() + 60*60*1000;
       #endif
+    
+      dhtTempMqttTopic = String(mqttDeviceTopic) + "/temperature" ;
+      dhtHumMqttTopic = String(mqttDeviceTopic) + "/humedity" ;
     }
 
+  void s_createMqttSensor(const char * __name, const char *topic, const char * deviceClass, const char *unitOfMeasurement)
+  {
+    String Conf_topic = String("homeassistant/sensor/") + mqttClientID+"_"+escapedMac + "/" + __name + "/config";
+    char buf[100];
+    sprintf_P(buf, PSTR("%s/status"), mqttDeviceTopic );
+    StaticJsonDocument<800> doc = {};
+    doc[F("name")] = __name;
+    doc[F("state_topic")] = topic;
+    doc[F("availability_topic")] = buf;
+    doc[F("unique_id")] = String(mqttClientID) + __name;
+    doc[F("unit_of_measurement")] = unitOfMeasurement;
+    doc[F("device_class")] = deviceClass;
+    JsonObject device = doc.createNestedObject("device"); // attach the sensor to the same device
+    device[F("identifiers")] = String("wled-sensor-") + mqttClientID;
+    device[F("manufacturer")] = "Aircoookie";
+    device[F("model")] = "WLED";
+    device[F("sw_version")] = VERSION;
+    device[F("name")] = mqttClientID;
+    Serial.println(Conf_topic.c_str());
+    String outJson;
+    size_t payload_size = serializeJson(doc,outJson);
+    DEBUG_PRINTLN(outJson.c_str());
+    DEBUG_PRINTLN(Conf_topic.c_str());
+    uint16_t ret = mqtt->publish(Conf_topic.c_str(),0, true, outJson.c_str() , payload_size);
+    mqtt->publish(buf, 0, true, "online");
+    Serial.print("publish :");
+    Serial.println(ret);
+
+  }
+
+
     void loop() {
+      if (WLED_MQTT_CONNECTED)
+      {
+        if (!mqttInitialized)
+        {
+          s_createMqttSensor("humiditySensor", dhtHumMqttTopic.c_str() ,"humidity", "%");
+          mqtt->publish(dhtHumMqttTopic.c_str(), 0, false, "0.0");
+          s_createMqttSensor("temperatureSensor", dhtTempMqttTopic.c_str() ,"temperature", "C");
+          mqtt->publish(dhtTempMqttTopic.c_str(), 0, false, "0.0");
+          mqttInitialized = true;
+        }
+      } 
+      else 
+      {
+        mqttInitialized = false;
+      }
       if (disabled) {
         return;
       }
+     
       if (millis() < nextReadTime) {
         return;
       }
@@ -127,16 +176,10 @@ class UsermodDHT : public Usermod {
         #define FLOAT_PREC 100
         if (WLED_MQTT_CONNECTED) {
           char buff[10];
-
-          strcpy(dhtMqttTopic + dhtMqttTopicLen, "/temperature");
           sprintf(buff, "%d.%d", (int)temperature, ((int)(temperature * FLOAT_PREC)) % FLOAT_PREC);
-          mqtt->publish(dhtMqttTopic, 0, false, buff);
-
+          mqtt->publish(dhtTempMqttTopic.c_str(), 0, false, buff);
           sprintf(buff, "%d.%d", (int)humidity, ((int)(humidity * FLOAT_PREC)) % FLOAT_PREC);
-          strcpy(dhtMqttTopic + dhtMqttTopicLen, "/humidity");
-          mqtt->publish(dhtMqttTopic, 0, false, buff);
-
-          dhtMqttTopic[dhtMqttTopicLen] = '\0';
+          mqtt->publish(dhtHumMqttTopic.c_str(), 0, false, buff);
         }
         #undef FLOAT_PREC
         #endif
@@ -243,5 +286,6 @@ class UsermodDHT : public Usermod {
     {
       return USERMOD_ID_DHT;
     }
+
 
 };
