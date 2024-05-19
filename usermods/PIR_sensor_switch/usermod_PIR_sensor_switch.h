@@ -274,18 +274,23 @@ void PIRsensorSwitch::publishMqtt(bool switchOn)
 #ifndef WLED_DISABLE_MQTT
   //Check if MQTT Connected, otherwise it will crash the 8266
   if (WLED_MQTT_CONNECTED) {
-    char buf[128];
-    sprintf_P(buf, PSTR("%s/motion"), mqttDeviceTopic);   //max length: 33 + 7 = 40
-    mqtt->publish(buf, 0, false, switchOn?"on":"off");
-    // Domoticz formatted message
-    if (idx > 0) {
-      StaticJsonDocument <128> msg;
-      msg[F("idx")]       = idx;
-      msg[F("RSSI")]      = WiFi.RSSI();
-      msg[F("command")]   = F("switchlight");
-      msg[F("switchcmd")] = switchOn ? F("On") : F("Off");
-      serializeJson(msg, buf, 128);
-      mqtt->publish("domoticz/in", 0, false, buf);
+    for (int i = 0; i < PIR_SENSOR_MAX_SENSORS; i++) {
+      if (PIRsensorPin[i] < 0) continue;
+      
+      char buf[128];
+      sprintf_P(buf, PSTR("%s/motion/%d"), mqttDeviceTopic, i);   //max length: 33 + 7 = 40
+      mqtt->publish(buf, 0, false, switchOn?"on":"off");
+      
+      // Domoticz formatted message
+      if (idx > 0) {
+        StaticJsonDocument <128> msg;
+        msg[F("idx")]       = idx;
+        msg[F("RSSI")]      = WiFi.RSSI();
+        msg[F("command")]   = F("switchlight");
+        msg[F("switchcmd")] = switchOn ? F("On") : F("Off");
+        serializeJson(msg, buf, 128);
+        mqtt->publish("domoticz/in", 0, false, buf);
+      }
     }
   }
 #endif
@@ -295,33 +300,37 @@ void PIRsensorSwitch::publishHomeAssistantAutodiscovery()
 {
 #ifndef WLED_DISABLE_MQTT
   if (WLED_MQTT_CONNECTED) {
-    StaticJsonDocument<600> doc;
-    char uid[24], json_str[1024], buf[128];
+    for (int i = 0; i < PIR_SENSOR_MAX_SENSORS; i++) {
+      if (PIRsensorPin[i] < 0) continue;
+      
+      StaticJsonDocument<600> doc;
+      char uid[24], json_str[1024], buf[128];
 
-    sprintf_P(buf, PSTR("%s Motion"), serverDescription); //max length: 33 + 7 = 40
-    doc[F("name")] = buf;
-    sprintf_P(buf, PSTR("%s/motion"), mqttDeviceTopic);   //max length: 33 + 7 = 40
-    doc[F("stat_t")] = buf;
-    doc[F("pl_on")]  = "on";
-    doc[F("pl_off")] = "off";
-    sprintf_P(uid, PSTR("%s_motion"), escapedMac.c_str());
-    doc[F("uniq_id")] = uid;
-    doc[F("dev_cla")] = F("motion");
-    doc[F("exp_aft")] = 1800;
+      sprintf_P(buf, PSTR("%s Motion %d"), serverDescription, i); //max length: 33 + 7 = 40
+      doc[F("name")] = buf;
+      sprintf_P(buf, PSTR("%s/motion/%d"), mqttDeviceTopic, i);   //max length: 33 + 7 = 40
+      doc[F("stat_t")] = buf;
+      doc[F("pl_on")]  = "on";
+      doc[F("pl_off")] = "off";
+      sprintf_P(uid, PSTR("%s_motion_%d"), escapedMac.c_str(), i);
+      doc[F("uniq_id")] = uid;
+      doc[F("dev_cla")] = F("motion");
+      doc[F("exp_aft")] = 1800;
 
-    JsonObject device = doc.createNestedObject(F("device")); // attach the sensor to the same device
-    device[F("name")] = serverDescription;
-    device[F("ids")]  = String(F("wled-sensor-")) + mqttClientID;
-    device[F("mf")]   = F(WLED_BRAND);
-    device[F("mdl")]  = F(WLED_PRODUCT_NAME);
-    device[F("sw")]   = versionString;
-    
-    sprintf_P(buf, PSTR("homeassistant/binary_sensor/%s/config"), uid);
-    DEBUG_PRINTLN(buf);
-    size_t payload_size = serializeJson(doc, json_str);
-    DEBUG_PRINTLN(json_str);
+      JsonObject device = doc.createNestedObject(F("device")); // attach the sensor to the same device
+      device[F("name")] = serverDescription;
+      device[F("ids")]  = String(F("wled-sensor-")) + mqttClientID;
+      device[F("mf")]   = F(WLED_BRAND);
+      device[F("mdl")]  = F(WLED_PRODUCT_NAME);
+      device[F("sw")]   = versionString;
+      
+      sprintf_P(buf, PSTR("homeassistant/binary_sensor/%s/config"), uid);
+      DEBUG_PRINTLN(buf);
+      size_t payload_size = serializeJson(doc, json_str);
+      DEBUG_PRINTLN(json_str);
 
-    mqtt->publish(buf, 0, true, json_str, payload_size); // do we really need to retain?
+      mqtt->publish(buf, 0, true, json_str, payload_size); // do we really need to retain?
+    }
   }
 #endif
 }

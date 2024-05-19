@@ -217,6 +217,10 @@
   #include "../usermods/TetrisAI_v2/usermod_v2_tetrisai.h"
 #endif
 
+#ifdef  USERMOD_LDR_MQTT_V2
+#include "../usermods/photoresistor_sensor_mqtt_v2/photoresistor_sensor_mqtt_v2.hpp"
+#endif
+
 void registerUsermods()
 {
 /*
@@ -260,6 +264,10 @@ void registerUsermods()
 
   #ifdef USERMOD_PIRSWITCH
   usermods.add(new PIRsensorSwitch());
+  #endif
+
+  #ifdef  USERMOD_LDR_MQTT_V2
+  usermods.add(new photoresistor_sensor_mqtt_v2());
   #endif
 
   #ifdef USERMOD_FOUR_LINE_DISPLAY
