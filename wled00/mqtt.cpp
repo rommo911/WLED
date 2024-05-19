@@ -5,7 +5,7 @@
  */
 
 #ifdef WLED_ENABLE_MQTT
-#define MQTT_KEEP_ALIVE_TIME 60    // contact the MQTT broker every 60 seconds
+#define MQTT_KEEP_ALIVE_TIME 30    // contact the MQTT broker every 60 seconds
 
 void parseMQTTBriPayload(char* payload)
 {
@@ -163,6 +163,11 @@ void publishMqtt()
 
 
 //HA autodiscovery was removed in favor of the native integration in HA v0.102.0
+void onDisconnect(AsyncMqttClientDisconnectReason reason)
+{
+    DEBUG_PRINTF("---MQTT--- Disconnected reason %d",(int)reason);
+    return ;
+}
 
 bool initMqtt()
 {
@@ -171,6 +176,7 @@ bool initMqtt()
   if (mqtt == nullptr) {
     mqtt = new AsyncMqttClient();
     mqtt->onMessage(onMqttMessage);
+    mqtt->onDisconnect(onDisconnect);
     mqtt->onConnect(onMqttConnect);
   }
   if (mqtt->connected()) return true;
@@ -192,6 +198,7 @@ bool initMqtt()
   mqtt->setWill(mqttStatusTopic, 0, true, "offline"); // LWT message
   #endif
   mqtt->setKeepAlive(MQTT_KEEP_ALIVE_TIME);
+  mqtt->setCleanSession(true);
   mqtt->connect();
   return true;
 }

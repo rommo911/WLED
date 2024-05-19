@@ -5,7 +5,6 @@
 #error "This user mod requires MQTT to be enabled."
 #endif
 
-
 #include <dht_nonblocking.h>
 
 // USERMOD_DHT_DHTTYPE:
@@ -38,7 +37,7 @@
 #else
 #ifdef ARDUINO_ARCH_ESP32
 #define DHTPIN 21
-#else //ESP8266 boards
+#else // ESP8266 boards
 #define DHTPIN 4
 #endif
 #endif
@@ -51,59 +50,58 @@
 // how many seconds after boot to take first measurement, 90 seconds
 // 90 gives enough time to OTA update firmware if this crashes
 #ifndef USERMOD_DHT_FIRST_MEASUREMENT_AT
-#define USERMOD_DHT_FIRST_MEASUREMENT_AT 9000
+#define USERMOD_DHT_FIRST_MEASUREMENT_AT 3000
 #endif
 
 // from COOLDOWN_TIME in dht_nonblocking.cpp
-#define DHT_TIMEOUT_TIME  10000
+#define DHT_TIMEOUT_TIME 5000
 
 DHT_nonblocking dht_sensor(DHTPIN, DHTTYPE);
 
+class UsermodDHT : public Usermod
+{
+private:
+  bool HomeAssistantDiscovery = false;
+  unsigned long nextReadTime = 0;
+  unsigned long lastReadTime = 0;
+  float humidity, temperature = 0;
+  bool initializing = true;
+  bool disabled = false;
+  bool mqttInitialized = false;
+  String dhtTempMqttTopic;
+  String dhtHumMqttTopic;
+#ifdef USERMOD_DHT_STATS
+  unsigned long nextResetStatsTime = 0;
+  uint16_t updates = 0;
+  uint16_t clean_updates = 0;
+  uint16_t errors = 0;
+  unsigned long maxDelay = 0;
+  unsigned long currentIteration = 0;
+  unsigned long maxIteration = 0;
+#endif
+  void onMqttConnect(bool sessionPresent) override;
 
-
-
-class UsermodDHT : public Usermod {
-  private:
-    unsigned long nextReadTime = 0;
-    unsigned long lastReadTime = 0;
-    float humidity, temperature = 0;
-    bool initializing = true;
-    bool disabled = false;
-    bool mqttInitialized = false;
-    String dhtTempMqttTopic;
-    String dhtHumMqttTopic;
-    #ifdef USERMOD_DHT_STATS
-    unsigned long nextResetStatsTime = 0;
-    uint16_t updates = 0;
-    uint16_t clean_updates = 0;
-    uint16_t errors = 0;
-    unsigned long maxDelay = 0;
-    unsigned long currentIteration = 0;
-    unsigned long maxIteration = 0;
-    #endif
-
-  public:
-    void setup() {
-      nextReadTime = millis() + USERMOD_DHT_FIRST_MEASUREMENT_AT;
-      lastReadTime = millis();
-
-      #ifdef USERMOD_DHT_STATS
-      nextResetStatsTime = millis() + 60*60*1000;
-      #endif
-    
-      dhtTempMqttTopic = String(mqttDeviceTopic) + "/temperature" ;
-      dhtHumMqttTopic = String(mqttDeviceTopic) + "/humedity" ;
-    }
-
-  void s_createMqttSensor(const char * __name, const char *topic, const char * deviceClass, const char *unitOfMeasurement)
+public:
+  void setup()
   {
-    String Conf_topic = String("homeassistant/sensor/") + mqttClientID+"_"+escapedMac + "/" + __name + "/config";
-    char buf[100];
-    sprintf_P(buf, PSTR("%s/status"), mqttDeviceTopic );
-    StaticJsonDocument<800> doc = {};
+    nextReadTime = millis() + USERMOD_DHT_FIRST_MEASUREMENT_AT;
+    lastReadTime = millis();
+
+#ifdef USERMOD_DHT_STATS
+    nextResetStatsTime = millis() + 60 * 60 * 1000;
+#endif
+
+    dhtTempMqttTopic = String(mqttDeviceTopic) + "/temperature";
+    dhtHumMqttTopic = String(mqttDeviceTopic) + "/humedity";
+  }
+
+  void s_createMqttSensor(const char *__name, const char *topic, const char *deviceClass, const char *unitOfMeasurement)
+  {
+    String Conf_topic = String("homeassistant/sensor/") + mqttClientID + "/" + __name + "/config";
+
+    StaticJsonDocument<600> doc = {};
     doc[F("name")] = __name;
     doc[F("state_topic")] = topic;
-    doc[F("availability_topic")] = buf;
     doc[F("unique_id")] = String(mqttClientID) + __name;
     doc[F("unit_of_measurement")] = unitOfMeasurement;
     doc[F("device_class")] = deviceClass;
@@ -113,179 +111,198 @@ class UsermodDHT : public Usermod {
     device[F("model")] = "WLED";
     device[F("sw_version")] = VERSION;
     device[F("name")] = mqttClientID;
+    char buf[100];
+    sprintf_P(buf, PSTR("%s/status"), mqttDeviceTopic);
+    doc[F("availability_topic")] = buf;
     Serial.println(Conf_topic.c_str());
     String outJson;
-    size_t payload_size = serializeJson(doc,outJson);
+    size_t payload_size = serializeJson(doc, outJson);
     DEBUG_PRINTLN(outJson.c_str());
     DEBUG_PRINTLN(Conf_topic.c_str());
-    uint16_t ret = mqtt->publish(Conf_topic.c_str(),0, true, outJson.c_str() , payload_size);
-    mqtt->publish(buf, 0, true, "online");
+    uint16_t ret = mqtt->publish(Conf_topic.c_str(), 0, true, outJson.c_str(), payload_size);
     Serial.print("publish :");
     Serial.println(ret);
-
   }
 
+  void publishHassDiscovery()
+  {
+      s_createMqttSensor("humiditySensor", dhtHumMqttTopic.c_str(), "humidity", "%");
+      //mqtt->publish(dhtHumMqttTopic.c_str(), 0, false, "0.0");
+      s_createMqttSensor("temperatureSensor", dhtTempMqttTopic.c_str(), "temperature", "C");
+     // mqtt->publish(dhtTempMqttTopic.c_str(), 0, false, "0.0");
+      mqttInitialized = true;
+  }
+  void loop()
+  {
+    if (disabled)
+    {
+      return;
+    }
+    if (millis() < nextReadTime)
+    {
+      return;
+    }
+    if (HomeAssistantDiscovery && WLED_MQTT_CONNECTED)
+    {
+      HomeAssistantDiscovery = false;
+      publishHassDiscovery();
+    }
+#ifdef USERMOD_DHT_STATS
+    if (millis() >= nextResetStatsTime)
+    {
+      nextResetStatsTime += 60 * 60 * 1000;
+      errors = 0;
+      updates = 0;
+      clean_updates = 0;
+    }
+    unsigned long dcalc = millis();
+    if (currentIteration == 0)
+    {
+      currentIteration = millis();
+    }
+#endif
 
-    void loop() {
+    float tempC;
+    if (dht_sensor.measure(&tempC, &humidity))
+    {
+#ifdef USERMOD_DHT_CELSIUS
+      temperature = tempC;
+#else
+      temperature = tempC * 9 / 5 + 32;
+#endif
+
+#ifdef USERMOD_DHT_MQTT
+// 10^n where n is number of decimal places to display in mqtt message. Please adjust buff size together with this constant
+#define FLOAT_PREC 100
       if (WLED_MQTT_CONNECTED)
       {
-        if (!mqttInitialized)
-        {
-          s_createMqttSensor("humiditySensor", dhtHumMqttTopic.c_str() ,"humidity", "%");
-          mqtt->publish(dhtHumMqttTopic.c_str(), 0, false, "0.0");
-          s_createMqttSensor("temperatureSensor", dhtTempMqttTopic.c_str() ,"temperature", "C");
-          mqtt->publish(dhtTempMqttTopic.c_str(), 0, false, "0.0");
-          mqttInitialized = true;
-        }
-      } 
-      else 
+        char buff[10];
+        sprintf(buff, "%d.%d", (int)temperature, ((int)(temperature * FLOAT_PREC)) % FLOAT_PREC);
+        mqtt->publish(dhtTempMqttTopic.c_str(), 0, false, buff);
+        sprintf(buff, "%d.%d", (int)humidity, ((int)(humidity * FLOAT_PREC)) % FLOAT_PREC);
+        mqtt->publish(dhtHumMqttTopic.c_str(), 0, false, buff);
+      }
+#undef FLOAT_PREC
+#endif
+
+      nextReadTime = millis() + USERMOD_DHT_MEASUREMENT_INTERVAL;
+      lastReadTime = millis();
+      initializing = false;
+
+#ifdef USERMOD_DHT_STATS
+      unsigned long icalc = millis() - currentIteration;
+      if (icalc > maxIteration)
       {
-        mqttInitialized = false;
+        maxIteration = icalc;
       }
-      if (disabled) {
-        return;
+      if (icalc > DHT_TIMEOUT_TIME)
+      {
+        errors += icalc / DHT_TIMEOUT_TIME;
       }
-     
-      if (millis() < nextReadTime) {
-        return;
+      else
+      {
+        clean_updates += 1;
       }
+      updates += 1;
+      currentIteration = 0;
 
-      #ifdef USERMOD_DHT_STATS
-      if (millis() >= nextResetStatsTime) {
-        nextResetStatsTime += 60*60*1000;
-        errors = 0;
-        updates = 0;
-        clean_updates = 0;
-      }
-      unsigned long dcalc = millis();
-      if (currentIteration == 0) {
-        currentIteration = millis();
-      }
-      #endif
-
-      float tempC;
-      if (dht_sensor.measure(&tempC, &humidity)) {
-        #ifdef USERMOD_DHT_CELSIUS
-        temperature = tempC;
-        #else
-        temperature = tempC * 9 / 5 + 32;
-        #endif
-
-        #ifdef USERMOD_DHT_MQTT
-        // 10^n where n is number of decimal places to display in mqtt message. Please adjust buff size together with this constant
-        #define FLOAT_PREC 100
-        if (WLED_MQTT_CONNECTED) {
-          char buff[10];
-          sprintf(buff, "%d.%d", (int)temperature, ((int)(temperature * FLOAT_PREC)) % FLOAT_PREC);
-          mqtt->publish(dhtTempMqttTopic.c_str(), 0, false, buff);
-          sprintf(buff, "%d.%d", (int)humidity, ((int)(humidity * FLOAT_PREC)) % FLOAT_PREC);
-          mqtt->publish(dhtHumMqttTopic.c_str(), 0, false, buff);
-        }
-        #undef FLOAT_PREC
-        #endif
-
-        nextReadTime = millis() + USERMOD_DHT_MEASUREMENT_INTERVAL;
-        lastReadTime = millis();
-        initializing = false;
-
-        #ifdef USERMOD_DHT_STATS
-        unsigned long icalc = millis() - currentIteration;
-        if (icalc > maxIteration) {
-          maxIteration = icalc;
-        }
-        if (icalc > DHT_TIMEOUT_TIME) {
-          errors += icalc/DHT_TIMEOUT_TIME;
-        } else {
-          clean_updates += 1;
-        }
-        updates += 1;
-        currentIteration = 0;
-
-        #endif
-      }
-
-      #ifdef USERMOD_DHT_STATS
-      dcalc = millis() - dcalc;
-      if (dcalc > maxDelay) {
-        maxDelay = dcalc;
-      }
-      #endif
-
-      if (((millis() - lastReadTime) > 10*USERMOD_DHT_MEASUREMENT_INTERVAL)) {
-        disabled = true;
-      }
+#endif
     }
 
-    void addToJsonInfo(JsonObject& root) {
-      if (disabled) {
-        return;
-      }
-      JsonObject user = root["u"];
-      if (user.isNull()) user = root.createNestedObject("u");
-
-      JsonArray temp = user.createNestedArray("Temperature");
-      JsonArray hum = user.createNestedArray("Humidity");
-
-      #ifdef USERMOD_DHT_STATS
-      JsonArray next = user.createNestedArray("next");
-      if (nextReadTime >= millis()) {
-        next.add((nextReadTime - millis()) / 1000);
-        next.add(" sec until read");
-      } else {
-        next.add((millis() - nextReadTime) / 1000);
-        next.add(" sec active reading");
-      }
-
-      JsonArray last = user.createNestedArray("last");
-      last.add((millis() - lastReadTime) / 60000);
-      last.add(" min since read");
-
-      JsonArray err = user.createNestedArray("errors");
-      err.add(errors);
-      err.add(" Errors");
-
-      JsonArray upd = user.createNestedArray("updates");
-      upd.add(updates);
-      upd.add(" Updates");
-
-      JsonArray cupd = user.createNestedArray("cleanUpdates");
-      cupd.add(clean_updates);
-      cupd.add(" Updates");
-
-      JsonArray iter = user.createNestedArray("maxIter");
-      iter.add(maxIteration);
-      iter.add(" ms");
-
-      JsonArray delay = user.createNestedArray("maxDelay");
-      delay.add(maxDelay);
-      delay.add(" ms");
-      #endif
-
-      if (initializing) {
-        // if we haven't read the sensor yet, let the user know
-        // that we are still waiting for the first measurement
-        temp.add((nextReadTime - millis()) / 1000);
-        temp.add(" sec until read");
-        hum.add((nextReadTime - millis()) / 1000);
-        hum.add(" sec until read");
-        return;
-      }
-
-      hum.add(humidity);
-      hum.add("%");
-
-      temp.add(temperature);
-      #ifdef USERMOD_DHT_CELSIUS
-      temp.add("°C");
-      #else
-      temp.add("°F");
-      #endif
-    }
-
-    uint16_t getId()
+#ifdef USERMOD_DHT_STATS
+    dcalc = millis() - dcalc;
+    if (dcalc > maxDelay)
     {
-      return USERMOD_ID_DHT;
+      maxDelay = dcalc;
+    }
+#endif
+
+    if (((millis() - lastReadTime) > 10 * USERMOD_DHT_MEASUREMENT_INTERVAL))
+    {
+      disabled = true;
+    }
+  }
+
+  void addToJsonInfo(JsonObject &root)
+  {
+    if (disabled)
+    {
+      return;
+    }
+    JsonObject user = root["u"];
+    if (user.isNull())
+      user = root.createNestedObject("u");
+
+    JsonArray temp = user.createNestedArray("Temperature");
+    JsonArray hum = user.createNestedArray("Humidity");
+
+#ifdef USERMOD_DHT_STATS
+    JsonArray next = user.createNestedArray("next");
+    if (nextReadTime >= millis())
+    {
+      next.add((nextReadTime - millis()) / 1000);
+      next.add(" sec until read");
+    }
+    else
+    {
+      next.add((millis() - nextReadTime) / 1000);
+      next.add(" sec active reading");
     }
 
+    JsonArray last = user.createNestedArray("last");
+    last.add((millis() - lastReadTime) / 60000);
+    last.add(" min since read");
 
+    JsonArray err = user.createNestedArray("errors");
+    err.add(errors);
+    err.add(" Errors");
+
+    JsonArray upd = user.createNestedArray("updates");
+    upd.add(updates);
+    upd.add(" Updates");
+
+    JsonArray cupd = user.createNestedArray("cleanUpdates");
+    cupd.add(clean_updates);
+    cupd.add(" Updates");
+
+    JsonArray iter = user.createNestedArray("maxIter");
+    iter.add(maxIteration);
+    iter.add(" ms");
+
+    JsonArray delay = user.createNestedArray("maxDelay");
+    delay.add(maxDelay);
+    delay.add(" ms");
+#endif
+
+    if (initializing)
+    {
+      // if we haven't read the sensor yet, let the user know
+      // that we are still waiting for the first measurement
+      temp.add((nextReadTime - millis()) / 1000);
+      temp.add(" sec until read");
+      hum.add((nextReadTime - millis()) / 1000);
+      hum.add(" sec until read");
+      return;
+    }
+
+    hum.add(humidity);
+    hum.add("%");
+
+    temp.add(temperature);
+#ifdef USERMOD_DHT_CELSIUS
+    temp.add("°C");
+#else
+    temp.add("°F");
+#endif
+  }
+
+  uint16_t getId()
+  {
+    return USERMOD_ID_DHT;
+  }
 };
+
+void UsermodDHT::onMqttConnect(bool sessionPresent)
+{
+    HomeAssistantDiscovery = true;
+}

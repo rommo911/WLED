@@ -318,35 +318,29 @@ void PIRsensorSwitch::publishHomeAssistantAutodiscovery()
   publishMqttStatsTopic = publishMqttStatsTopic + _name;
   if (WLED_MQTT_CONNECTED)
   {
-    StaticJsonDocument<500> doc;
-    char uid[100], json_str[500], buf[150];
+    StaticJsonDocument<600> doc;
+    char json_str[1024], buf[150];
 
-    sprintf_P(buf, PSTR("%s Motion %s "), serverDescription, _name); // max length: 33 + 7 = 40
+    sprintf_P(buf, PSTR("%s-Motion-%s"), serverDescription, _name); // max length: 33 + 7 = 40
     doc[F("name")] = buf;
     sprintf_P(buf, PSTR("%s/motion_%s"), mqttDeviceTopic, _name); // max length: 33 + 7 = 40
     doc[F("stat_t")] = buf;
     doc[F("pl_on")] = "on";
     doc[F("pl_off")] = "off";
-    sprintf_P(uid, PSTR("%s_%s"), mqttDeviceTopic,escapedMac.c_str());
-    doc[F("uniq_id")] = uid;
+    sprintf_P(buf, PSTR("%s_%s"), serverDescription,_name);
+    doc[F("uniq_id")] = buf;
     doc[F("dev_cla")] = F("motion");
-    sprintf_P(buf, PSTR("%s/status"), mqttDeviceTopic);
-    doc[F("availability_topic")] = buf;
-
     JsonObject device = doc.createNestedObject("device"); // attach the sensor to the same device
     device[F("identifiers")] = String("wled-sensor-") + String(mqttClientID);
     device[F("manufacturer")] = "Aircoookie";
     device[F("model")] = "WLED";
     device[F("sw_version")] = VERSION;
     device[F("name")] = String(mqttClientID);
-    String Conf_topic = String("homeassistant/binary_sensor/") + mqttClientID+"_"+escapedMac + "/" + _name + "/config";
+    String Conf_topic = String("homeassistant/binary_sensor/") +  buf + "/config";
     size_t payload_size = serializeJson(doc, json_str);
     DEBUG_PRINTLN(json_str);
-    mqtt->publish(Conf_topic.c_str(), 1, true, json_str, payload_size); // do we really need to retain?
-    sprintf_P(buf, PSTR("%s/status"), mqttDeviceTopic);
-    mqtt->publish(buf, 1, true, "online", 7); // do we really need to retain?
-    this->publishMqtt("off");
-
+    mqtt->publish(Conf_topic.c_str(), 0, true, json_str, payload_size); // do we really need to retain?
+    this->publishMqtt(sensorPinState == HIGH ? "on" : "off");
   }
 #endif
 }
@@ -429,19 +423,21 @@ void PIRsensorSwitch::setup()
 
 void PIRsensorSwitch::onMqttConnect(bool sessionPresent)
 {
-  if (HomeAssistantDiscovery)
-  {
-    publishHomeAssistantAutodiscovery();
-  }
+  HomeAssistantDiscovery = true;
 }
 
 void PIRsensorSwitch::loop()
 {
   // only check sensors 4x/s
-  if (!enabled || millis() - lastLoop < 500 || strip.isUpdating())
+  uint16_t val = 250 + random(0, 100);
+  if (!enabled || millis() - lastLoop < (val) || strip.isUpdating())
     return;
   lastLoop = millis();
-
+  if (HomeAssistantDiscovery && WLED_MQTT_CONNECTED)
+  {
+    HomeAssistantDiscovery = false;
+    publishHomeAssistantAutodiscovery();
+  }
   if (!updatePIRsensorState())
   {
     handleOffTimer();
