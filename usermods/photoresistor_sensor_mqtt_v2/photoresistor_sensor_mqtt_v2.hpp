@@ -8,7 +8,7 @@ class photoresistor_sensor_mqtt_v2 : public Usermod
 private:
   const int LIGHT_PIN = A0;
   long UPDATE_MS = 3000;
-  int CHANGE_THRESHOLD = 5;
+  int CHANGE_THRESHOLD = 2;
   const char *MQTT_TOPIC = "/ldr";
   int ldrPin = A0;
   long lastTime = 0;
@@ -19,6 +19,7 @@ private:
   float lastPercentage = 0;
   bool hassDiscoverySent = false;
   bool ldrEnabled = true;
+  bool inverted = false;
   bool initDone = false;
   static const char _name[];
 
@@ -28,6 +29,7 @@ public:
   void setup()
   {
     pinMode(LIGHT_PIN, INPUT);
+    initDone = true;
   }
 
   void connected()
@@ -43,7 +45,14 @@ public:
       timeDiff = millis() - lastTime;
 
       lightValue = analogRead(LIGHT_PIN);
-      lightPercentage = ((float)lightValue * -1 + 1024) / (float)1024 * 100;
+      if (inverted)
+      {
+        lightPercentage = 100.0 - ((float)lightValue * -1 + 1024) / (float)1024 * 100;
+      }
+      else
+      {
+        lightPercentage = ((float)lightValue * -1 + 1024) / (float)1024 * 100;
+      }
 
       if (WLED_MQTT_CONNECTED)
       {
@@ -63,6 +72,7 @@ public:
     top["Enabled"] = ldrEnabled;
     top["LDR Pin"] = ldrPin;
     top["LDR update interval"] = UPDATE_MS;
+    top["LDR inverted"] = inverted;
   }
 
   bool readFromConfig(JsonObject &root)
@@ -73,6 +83,7 @@ public:
     configComplete &= getJsonValue(top["Enabled"], ldrEnabled);
     configComplete &= getJsonValue(top["LDR Pin"], ldrPin);
     configComplete &= getJsonValue(top["LDR update interval"], UPDATE_MS);
+    configComplete &= getJsonValue(top["LDR inverted"], inverted);
 
     if (initDone && (ldrPin != oldLdrPin))
     {
@@ -152,7 +163,7 @@ public:
       sprintf_P(buf, PSTR("homeassistant/sensor/%s/ldr/config"), uid);
 
       size_t payload_size = serializeJson(doc, json_str);
-      mqtt->publish(buf, 0, true, json_str, payload_size);
+      mqtt->publish(buf, 1, true, json_str, payload_size);
       hassDiscoverySent = true;
     }
   }
